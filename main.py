@@ -7,14 +7,21 @@ from datetime import datetime
 import pytz
 
 # ======================
-# CONFIG
+# TOKEN CHECK (สำคัญมาก)
 # ======================
 
 TOKEN = os.getenv("TOKEN")
 
+if not TOKEN:
+    print("❌ TOKEN ไม่ถูกตั้งค่าใน Render")
+    exit()
+
+# ======================
+# CONFIG
+# ======================
+
 LEAVE_CHANNEL_NAME = "ลา"
 SUMMARY_CHANNEL_NAME = "สรุปลา"
-
 THAI_TZ = pytz.timezone("Asia/Bangkok")
 
 DATA_FILE = "leave_data.json"
@@ -26,20 +33,19 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-leave_data = {
-    "20:00": [],
-    "22:00": []
-}
-
+leave_data = {"20:00": [], "22:00": []}
 message_id = None
 
 # ======================
-# LOAD / SAVE
+# LOAD / SAVE SAFE
 # ======================
 
 def save_data():
-    with open(DATA_FILE, "w", encoding="utf-8") as f:
-        json.dump(leave_data, f, ensure_ascii=False, indent=4)
+    try:
+        with open(DATA_FILE, "w", encoding="utf-8") as f:
+            json.dump(leave_data, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print("save_data error:", e)
 
 def load_data():
     global leave_data
@@ -47,11 +53,15 @@ def load_data():
         with open(DATA_FILE, "r", encoding="utf-8") as f:
             leave_data = json.load(f)
     except:
+        leave_data = {"20:00": [], "22:00": []}
         save_data()
 
 def save_state():
-    with open(STATE_FILE, "w", encoding="utf-8") as f:
-        json.dump({"message_id": message_id}, f)
+    try:
+        with open(STATE_FILE, "w", encoding="utf-8") as f:
+            json.dump({"message_id": message_id}, f)
+    except:
+        pass
 
 def load_state():
     global message_id
@@ -68,11 +78,6 @@ def load_state():
 def is_active_time():
     now = datetime.now(THAI_TZ)
     return 18 <= now.hour < 24
-
-async def shutdown_bot():
-    print("⛔ 00:00 shutdown bot")
-    await bot.close()
-    os._exit(0)
 
 # ======================
 # EMBED
@@ -93,12 +98,12 @@ def build_embed():
     embed.add_field(name="🌙 20:00", value=fmt(leave_data["20:00"]), inline=False)
     embed.add_field(name="🌌 22:00", value=fmt(leave_data["22:00"]), inline=False)
 
-    embed.set_footer(text="ใช้งานได้ 18:00 - 00:00")
+    embed.set_footer(text="ใช้งาน 18:00 - 00:00")
 
     return embed
 
 # ======================
-# BUTTON VIEW
+# BUTTONS
 # ======================
 
 class LeaveView(View):
@@ -109,7 +114,7 @@ class LeaveView(View):
     async def t20(self, i: discord.Interaction, b: Button):
 
         if not is_active_time():
-            return await i.response.send_message("⛔ นอกเวลา 18:00–00:00", ephemeral=True)
+            return await i.response.send_message("⛔ ยังไม่ถึงเวลา", ephemeral=True)
 
         uid = str(i.user.id)
 
@@ -128,7 +133,7 @@ class LeaveView(View):
     async def t22(self, i: discord.Interaction, b: Button):
 
         if not is_active_time():
-            return await i.response.send_message("⛔ นอกเวลา 18:00–00:00", ephemeral=True)
+            return await i.response.send_message("⛔ ยังไม่ถึงเวลา", ephemeral=True)
 
         uid = str(i.user.id)
 
@@ -142,32 +147,6 @@ class LeaveView(View):
         await update_message(i.guild)
 
         await i.response.send_message("✅ เลือก 22:00 แล้ว", ephemeral=True)
-
-    @discord.ui.button(label="ยกเลิก 20:00", style=discord.ButtonStyle.danger)
-    async def c20(self, i: discord.Interaction, b: Button):
-
-        uid = str(i.user.id)
-
-        if uid in leave_data["20:00"]:
-            leave_data["20:00"].remove(uid)
-            save_data()
-            await update_message(i.guild)
-            return await i.response.send_message("❌ ยกเลิก 20:00 แล้ว", ephemeral=True)
-
-        await i.response.send_message("⚠️ ยังไม่ได้เลือก 20:00", ephemeral=True)
-
-    @discord.ui.button(label="ยกเลิก 22:00", style=discord.ButtonStyle.danger)
-    async def c22(self, i: discord.Interaction, b: Button):
-
-        uid = str(i.user.id)
-
-        if uid in leave_data["22:00"]:
-            leave_data["22:00"].remove(uid)
-            save_data()
-            await update_message(i.guild)
-            return await i.response.send_message("❌ ยกเลิก 22:00 แล้ว", ephemeral=True)
-
-        await i.response.send_message("⚠️ ยังไม่ได้เลือก 22:00", ephemeral=True)
 
 # ======================
 # UPDATE MESSAGE
@@ -193,11 +172,11 @@ async def update_message(guild):
         msg = await channel.send(embed=build_embed(), view=LeaveView())
         message_id = msg.id
         save_state()
-    except:
-        pass
+    except Exception as e:
+        print("update_message error:", e)
 
 # ======================
-# RESET + SHUTDOWN LOOP
+# LOOP (NO CRASH ZONE)
 # ======================
 
 @tasks.loop(minutes=1)
@@ -205,9 +184,13 @@ async def time_loop():
 
     now = datetime.now(THAI_TZ)
 
-    # 🔴 00:00 → ปิดบอทจริง
+    # 🔴 00:00 reset + stop safe
     if now.hour == 0 and now.minute == 0:
-        await shutdown_bot()
+        leave_data["20:00"] = []
+        leave_data["22:00"] = []
+        save_data()
+
+    # ❌ ไม่ shutdown ทันที (กัน exit early)
 
 # ======================
 # SUMMARY
@@ -244,10 +227,6 @@ async def on_ready():
 
     load_data()
     load_state()
-
-    if not is_active_time():
-        await shutdown_bot()
-        return
 
     time_loop.start()
     summary_loop.start()
