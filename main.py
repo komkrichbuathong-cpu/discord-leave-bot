@@ -7,21 +7,18 @@ from datetime import datetime
 import pytz
 
 # ======================
-# TOKEN CHECK (สำคัญมาก)
+# CONFIG
 # ======================
 
 TOKEN = os.getenv("TOKEN")
 
 if not TOKEN:
-    print("❌ TOKEN ไม่ถูกตั้งค่าใน Render")
+    print("❌ TOKEN ไม่ถูกตั้งค่า")
     exit()
-
-# ======================
-# CONFIG
-# ======================
 
 LEAVE_CHANNEL_NAME = "ลา"
 SUMMARY_CHANNEL_NAME = "สรุปลา"
+
 THAI_TZ = pytz.timezone("Asia/Bangkok")
 
 DATA_FILE = "leave_data.json"
@@ -33,19 +30,23 @@ intents.members = True
 
 bot = commands.Bot(command_prefix="!", intents=intents)
 
-leave_data = {"20:00": [], "22:00": []}
+leave_data = {
+    "20:00": [],
+    "22:00": []
+}
+
 message_id = None
 
 # ======================
-# LOAD / SAVE SAFE
+# LOAD / SAVE
 # ======================
 
 def save_data():
     try:
         with open(DATA_FILE, "w", encoding="utf-8") as f:
             json.dump(leave_data, f, ensure_ascii=False, indent=4)
-    except Exception as e:
-        print("save_data error:", e)
+    except:
+        pass
 
 def load_data():
     global leave_data
@@ -72,7 +73,7 @@ def load_state():
         message_id = None
 
 # ======================
-# TIME CONTROL
+# TIME CHECK
 # ======================
 
 def is_active_time():
@@ -103,7 +104,7 @@ def build_embed():
     return embed
 
 # ======================
-# BUTTONS
+# VIEW (PERSISTENT BUTTONS)
 # ======================
 
 class LeaveView(View):
@@ -114,7 +115,7 @@ class LeaveView(View):
     async def t20(self, i: discord.Interaction, b: Button):
 
         if not is_active_time():
-            return await i.response.send_message("⛔ ยังไม่ถึงเวลา", ephemeral=True)
+            return await i.response.send_message("⛔ นอกเวลา", ephemeral=True)
 
         uid = str(i.user.id)
 
@@ -133,7 +134,7 @@ class LeaveView(View):
     async def t22(self, i: discord.Interaction, b: Button):
 
         if not is_active_time():
-            return await i.response.send_message("⛔ ยังไม่ถึงเวลา", ephemeral=True)
+            return await i.response.send_message("⛔ นอกเวลา", ephemeral=True)
 
         uid = str(i.user.id)
 
@@ -147,6 +148,34 @@ class LeaveView(View):
         await update_message(i.guild)
 
         await i.response.send_message("✅ เลือก 22:00 แล้ว", ephemeral=True)
+
+    # ================= CANCEL 20 =================
+    @discord.ui.button(label="ยกเลิก 20:00", style=discord.ButtonStyle.danger)
+    async def c20(self, i: discord.Interaction, b: Button):
+
+        uid = str(i.user.id)
+
+        if uid in leave_data["20:00"]:
+            leave_data["20:00"].remove(uid)
+            save_data()
+            await update_message(i.guild)
+            return await i.response.send_message("❌ ยกเลิก 20:00 แล้ว", ephemeral=True)
+
+        await i.response.send_message("⚠️ ยังไม่ได้เลือก 20:00", ephemeral=True)
+
+    # ================= CANCEL 22 =================
+    @discord.ui.button(label="ยกเลิก 22:00", style=discord.ButtonStyle.danger)
+    async def c22(self, i: discord.Interaction, b: Button):
+
+        uid = str(i.user.id)
+
+        if uid in leave_data["22:00"]:
+            leave_data["22:00"].remove(uid)
+            save_data()
+            await update_message(i.guild)
+            return await i.response.send_message("❌ ยกเลิก 22:00 แล้ว", ephemeral=True)
+
+        await i.response.send_message("⚠️ ยังไม่ได้เลือก 22:00", ephemeral=True)
 
 # ======================
 # UPDATE MESSAGE
@@ -172,29 +201,21 @@ async def update_message(guild):
         msg = await channel.send(embed=build_embed(), view=LeaveView())
         message_id = msg.id
         save_state()
-    except Exception as e:
-        print("update_message error:", e)
+    except:
+        pass
 
 # ======================
-# LOOP (NO CRASH ZONE)
+# LOOPS
 # ======================
 
 @tasks.loop(minutes=1)
 async def time_loop():
-
     now = datetime.now(THAI_TZ)
 
-    # 🔴 00:00 reset + stop safe
     if now.hour == 0 and now.minute == 0:
         leave_data["20:00"] = []
         leave_data["22:00"] = []
         save_data()
-
-    # ❌ ไม่ shutdown ทันที (กัน exit early)
-
-# ======================
-# SUMMARY
-# ======================
 
 @tasks.loop(minutes=1)
 async def summary_loop():
@@ -218,7 +239,7 @@ async def summary_loop():
             )
 
 # ======================
-# READY
+# READY (IMPORTANT FIX)
 # ======================
 
 @bot.event
@@ -228,6 +249,9 @@ async def on_ready():
     load_data()
     load_state()
 
+    # 🔥 FIX: ทำให้ปุ่มไม่หาย
+    bot.add_view(LeaveView())
+
     time_loop.start()
     summary_loop.start()
 
@@ -235,7 +259,7 @@ async def on_ready():
         await update_message(guild)
 
 # ======================
-# START
+# RUN
 # ======================
 
 bot.run(TOKEN)
