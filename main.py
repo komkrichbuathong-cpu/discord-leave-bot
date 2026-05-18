@@ -3,29 +3,8 @@ import json
 import discord
 from discord.ext import commands, tasks
 from discord.ui import View, Button
-from flask import Flask
-from threading import Thread
 from datetime import datetime
 import pytz
-
-# ======================
-# Flask keep alive (Render)
-# ======================
-
-app = Flask(__name__)
-
-@app.route('/')
-def home():
-    return "Bot is running!"
-
-def run_web():
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
-
-def keep_alive():
-    t = Thread(target=run_web)
-    t.daemon = True
-    t.start()
 
 # ======================
 # CONFIG
@@ -55,7 +34,7 @@ leave_data = {
 message_id = None
 
 # ======================
-# LOAD / SAVE DATA
+# LOAD / SAVE
 # ======================
 
 def save_data():
@@ -78,8 +57,7 @@ def load_state():
     global message_id
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
-            data = json.load(f)
-            message_id = data.get("message_id")
+            message_id = json.load(f).get("message_id")
     except:
         message_id = None
 
@@ -91,6 +69,11 @@ def is_active_time():
     now = datetime.now(THAI_TZ)
     return 18 <= now.hour < 24
 
+async def shutdown_bot():
+    print("⛔ 00:00 shutdown bot")
+    await bot.close()
+    os._exit(0)
+
 # ======================
 # EMBED
 # ======================
@@ -99,19 +82,14 @@ def build_embed():
     now = datetime.now(THAI_TZ)
 
     def fmt(lst):
-        if not lst:
-            return "ไม่มี"
-        return "\n".join([f"• <@{u}>" for u in lst])
+        return "\n".join([f"• <@{u}>" for u in lst]) if lst else "ไม่มี"
 
     embed = discord.Embed(
         title="📅 ระบบเช็คชื่อลา",
-        description="กดปุ่มเพื่อเลือกเวลา",
         color=discord.Color.blue()
     )
 
     embed.add_field(name="📆 วันที่", value=now.strftime("%d/%m/%Y"), inline=False)
-    embed.add_field(name="⏰ เวลา", value=now.strftime("%H:%M:%S"), inline=False)
-
     embed.add_field(name="🌙 20:00", value=fmt(leave_data["20:00"]), inline=False)
     embed.add_field(name="🌌 22:00", value=fmt(leave_data["22:00"]), inline=False)
 
@@ -120,21 +98,20 @@ def build_embed():
     return embed
 
 # ======================
-# VIEW (BUTTONS)
+# BUTTON VIEW
 # ======================
 
 class LeaveView(View):
     def __init__(self):
         super().__init__(timeout=None)
 
-    # ================= 20:00 =================
     @discord.ui.button(label="20:00", style=discord.ButtonStyle.primary)
-    async def leave20(self, interaction: discord.Interaction, button: Button):
+    async def t20(self, i: discord.Interaction, b: Button):
 
         if not is_active_time():
-            return await interaction.response.send_message("⛔ ใช้ได้ 18:00–00:00", ephemeral=True)
+            return await i.response.send_message("⛔ นอกเวลา 18:00–00:00", ephemeral=True)
 
-        uid = str(interaction.user.id)
+        uid = str(i.user.id)
 
         if uid in leave_data["22:00"]:
             leave_data["22:00"].remove(uid)
@@ -143,18 +120,17 @@ class LeaveView(View):
             leave_data["20:00"].append(uid)
 
         save_data()
-        await update_message(interaction.guild)
+        await update_message(i.guild)
 
-        await interaction.response.send_message("✅ เลือก 20:00 แล้ว", ephemeral=True)
+        await i.response.send_message("✅ เลือก 20:00 แล้ว", ephemeral=True)
 
-    # ================= 22:00 =================
     @discord.ui.button(label="22:00", style=discord.ButtonStyle.success)
-    async def leave22(self, interaction: discord.Interaction, button: Button):
+    async def t22(self, i: discord.Interaction, b: Button):
 
         if not is_active_time():
-            return await interaction.response.send_message("⛔ ใช้ได้ 18:00–00:00", ephemeral=True)
+            return await i.response.send_message("⛔ นอกเวลา 18:00–00:00", ephemeral=True)
 
-        uid = str(interaction.user.id)
+        uid = str(i.user.id)
 
         if uid in leave_data["20:00"]:
             leave_data["20:00"].remove(uid)
@@ -163,37 +139,35 @@ class LeaveView(View):
             leave_data["22:00"].append(uid)
 
         save_data()
-        await update_message(interaction.guild)
+        await update_message(i.guild)
 
-        await interaction.response.send_message("✅ เลือก 22:00 แล้ว", ephemeral=True)
+        await i.response.send_message("✅ เลือก 22:00 แล้ว", ephemeral=True)
 
-    # ================= CANCEL 20 =================
     @discord.ui.button(label="ยกเลิก 20:00", style=discord.ButtonStyle.danger)
-    async def cancel20(self, interaction: discord.Interaction, button: Button):
+    async def c20(self, i: discord.Interaction, b: Button):
 
-        uid = str(interaction.user.id)
+        uid = str(i.user.id)
 
         if uid in leave_data["20:00"]:
             leave_data["20:00"].remove(uid)
             save_data()
-            await update_message(interaction.guild)
-            return await interaction.response.send_message("❌ ยกเลิก 20:00 แล้ว", ephemeral=True)
+            await update_message(i.guild)
+            return await i.response.send_message("❌ ยกเลิก 20:00 แล้ว", ephemeral=True)
 
-        await interaction.response.send_message("⚠️ ยังไม่ได้เลือก 20:00", ephemeral=True)
+        await i.response.send_message("⚠️ ยังไม่ได้เลือก 20:00", ephemeral=True)
 
-    # ================= CANCEL 22 =================
     @discord.ui.button(label="ยกเลิก 22:00", style=discord.ButtonStyle.danger)
-    async def cancel22(self, interaction: discord.Interaction, button: Button):
+    async def c22(self, i: discord.Interaction, b: Button):
 
-        uid = str(interaction.user.id)
+        uid = str(i.user.id)
 
         if uid in leave_data["22:00"]:
             leave_data["22:00"].remove(uid)
             save_data()
-            await update_message(interaction.guild)
-            return await interaction.response.send_message("❌ ยกเลิก 22:00 แล้ว", ephemeral=True)
+            await update_message(i.guild)
+            return await i.response.send_message("❌ ยกเลิก 22:00 แล้ว", ephemeral=True)
 
-        await interaction.response.send_message("⚠️ ยังไม่ได้เลือก 22:00", ephemeral=True)
+        await i.response.send_message("⚠️ ยังไม่ได้เลือก 22:00", ephemeral=True)
 
 # ======================
 # UPDATE MESSAGE
@@ -215,33 +189,32 @@ async def update_message(guild):
     except:
         pass
 
-    msg = await channel.send(embed=build_embed(), view=LeaveView())
-    message_id = msg.id
-    save_state()
+    try:
+        msg = await channel.send(embed=build_embed(), view=LeaveView())
+        message_id = msg.id
+        save_state()
+    except:
+        pass
 
 # ======================
-# AUTO RESET
+# RESET + SHUTDOWN LOOP
 # ======================
 
 @tasks.loop(minutes=1)
-async def daily_reset():
+async def time_loop():
 
     now = datetime.now(THAI_TZ)
 
+    # 🔴 00:00 → ปิดบอทจริง
     if now.hour == 0 and now.minute == 0:
-        leave_data["20:00"] = []
-        leave_data["22:00"] = []
-        save_data()
-
-        for guild in bot.guilds:
-            await update_message(guild)
+        await shutdown_bot()
 
 # ======================
-# AUTO SUMMARY
+# SUMMARY
 # ======================
 
 @tasks.loop(minutes=1)
-async def auto_summary():
+async def summary_loop():
 
     now = datetime.now(THAI_TZ)
 
@@ -262,7 +235,7 @@ async def auto_summary():
             )
 
 # ======================
-# READY EVENT
+# READY
 # ======================
 
 @bot.event
@@ -272,8 +245,12 @@ async def on_ready():
     load_data()
     load_state()
 
-    daily_reset.start()
-    auto_summary.start()
+    if not is_active_time():
+        await shutdown_bot()
+        return
+
+    time_loop.start()
+    summary_loop.start()
 
     for guild in bot.guilds:
         await update_message(guild)
@@ -282,5 +259,4 @@ async def on_ready():
 # START
 # ======================
 
-keep_alive()
 bot.run(TOKEN)
